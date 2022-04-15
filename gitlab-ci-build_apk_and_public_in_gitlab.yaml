@@ -1,0 +1,42 @@
+# Пример сборки apk для андройда и публикации его в гитлаб реджестери
+# An example of building an apk for android and publishing it to the gitlab registry
+
+stages:
+  - build
+  - upload
+
+variables:
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${CI_PROJECT_NAME}-generic/${CI_COMMIT_TAG}"
+
+
+deploy:
+  stage: build
+  image: reactnativecommunity/react-native-android:5.4
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - yarn install
+    - chmod +x android/gradlew
+    - yarn release
+    - mv -v android/app/build/outputs/apk/release/app-release.apk ./meeting-room-$CI_COMMIT_TAG.apk
+    - ls -l
+  artifacts:
+    paths:
+      - meeting-room-$CI_COMMIT_TAG.apk
+#  only:
+#    - dev
+  tags:
+    - docker
+
+upload_artifacrs:
+  stage: upload
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo ${PACKAGE_REGISTRY_URL}
+    - 'curl   --progress-bar --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file ./meeting-room-$CI_COMMIT_TAG.apk "${PACKAGE_REGISTRY_URL}/meeting-room-$CI_COMMIT_TAG.apk"'
+#  only:
+#    - dev
+  tags:
+    - docker
