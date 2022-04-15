@@ -1,4 +1,5 @@
 # пример запуска пайплайнов из разных проектов
+# example of running pipelines from different projects
 
 image: python:3.9.6-slim
 
