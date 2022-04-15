@@ -1,0 +1,152 @@
+# пример запуска пайплайнов из разных проектов
+
+image: python:3.9.6-slim
+
+stages:
+  - test
+  - build
+  - deploy
+  - clean
+  - sys-test
+
+include:
+  # build
+  - project: infrastructure/pipeline_block/build_image
+    file: build_image_docker.yml
+    ref:  v.1.0.0
+  # test
+  - project: infrastructure/pipeline_block/test_flake8
+    file: test_flake8.yml
+    ref: v.1.0.0
+  - project: infrastructure/pipeline_block/test_mypy
+    file: test_mypy.yml
+    ref: v.1.0.0
+  - project: infrastructure/pipeline_block/test_bandit
+    file: test_bandit.yml
+    ref: v.1.0.0
+
+
+test_flake8:
+  stage: test
+  variables:
+    FLAGS: "--max-line-length=121"
+  extends:
+    - .test_flake8_docker
+  allow_failure: true
+  only:
+    - main
+  tags:
+    - docker
+
+test_mypy:
+  stage: test
+  variables:
+    FLAGS: "--ignore-missing-imports"
+  extends:
+    - .test_mypy_docker
+  allow_failure: true
+  only:
+    - main
+  tags:
+    - docker
+
+test_bandit:
+  stage: test
+  variables:
+    FLAGS: "-x ./tests/"
+  extends:
+    - .test_bandit_docker
+  allow_failure: true
+  only:
+    - main
+  tags:
+    - docker
+
+# build_image:
+#   stage: build
+#   variables:
+#     TAG_IMAGE: ${CI_COMMIT_SHORT_SHA}
+#   extends:
+#     - .build_image_docker
+#   only:
+#     - main
+#   tags:
+#     - docker
+
+build_image_unit:
+  stage: build
+  variables:
+    TAG_IMAGE: unittest
+  extends:
+    - .build_image_docker
+  only:
+    - main
+  tags:
+    - docker
+
+# deploy:
+#   stage: deploy
+#   image: centosadmin/kubernetes-helm:v3.6.3
+#   script:   
+#     - kubectl config set-cluster k8s --insecure-skip-tls-verify=true --server=${K8S_API_URL}
+#     - kubectl config set-credentials ci --token=${K8S_CI_TOKEN_DEV}
+#     - kubectl config set-context ci --cluster=k8s --user=ci
+#     - kubectl config use-context ci
+#     - kubectl version
+#     - kubectl -n tag-dev describe pod $(kubectl -n tag-dev get pod | awk '/tag-controller-dev/{print $1}') | awk '/Image:/{print $2}' > image-tag-controller.txt
+#     - cat image-tag-controller.txt
+#     - cd ${PWD}/manifests
+#     - ls -l
+#     - sed -i "s/controller-digital-twin:latest/controller-digital-twin:${CI_COMMIT_SHORT_SHA}/g" $(ls *deployment.yaml | awk ' { print " " $1 } ')
+#     - ls *deployment.yaml | awk ' { print " -f " $1 } '
+#     - kubectl delete $(ls *deployment.yaml | awk ' { print " -f " $1 } ') || true
+#     - kubectl apply $(ls *deployment.yaml | awk ' { print " -f " $1 } ')  || true
+#   artifacts:
+#     paths:
+#     - image-tag-controller.txt
+#     expire_in: 1 day
+#   only:
+#     - main
+#   tags:
+#     - docker
+
+clean:
+  stage: clean
+  image: docker:stable
+  when: always
+  script:
+    - cat image-tag-controller.txt
+    - docker images -a | grep ${CI_REGISTRY_IMAGE}
+    - docker images -a | grep ${CI_REGISTRY_IMAGE} | awk '{print $3}' | xargs docker rmi -f || true
+    - rm -r $PWD/*
+  allow_failure: true
+  only:
+    - main
+  tags:
+    - docker
+
+bridge:
+  stage: sys-test
+  variables:
+#    path_to_image: "git.business.ru:5001/vsat/backend-services/vsat-backend:${CI_PROJECT_NAME}-${CI_COMMIT_SHORT_SHA}"
+#    filename: "${CI_PROJECT_NAME}_image.txt"
+    APP: "controller"
+  trigger:
+    project: tag-distribution-machine/deployment
+    branch: test
+    strategy: depend
+  only:
+    - main
+
+bridge2:
+  stage: sys-test
+  variables:
+#    path_to_image: "git.business.ru:5001/vsat/backend-services/vsat-backend:${CI_PROJECT_NAME}-${CI_COMMIT_SHORT_SHA}"
+#    filename: "${CI_PROJECT_NAME}_image.txt"
+    APP: "controller"
+  trigger:
+    project: tag-distribution-machine/deployment
+    branch: test_v2
+    strategy: depend
+  only:
+    - main
