@@ -1,0 +1,291 @@
+# Разворачивание тестовой среды с запуском системных тестов, разворачивание приложения в кластере в зависимости от условия
+
+stages:
+  - preparation
+  - test
+  - destroy
+  - retag
+  - clone
+  - deploy
+  - clean
+
+variables:
+#  APP: controller
+  TAG_CURENT: unittest
+  TAG_CURENT_BACK: unittest2
+  CONTROLLER_IMAGE: git.iot.orange-business.ru:5001/tag-distribution-machine/backend-services/controller-digital-twin
+  HARDWARE_IMAGE: git.iot.orange-business.ru:5001/tag-distribution-machine/backend-services/hardware-control-unit
+  BACKEND_IMAGE: git.iot.orange-business.ru:5001/tag-distribution-machine/backend-services/tag_control_center
+  TAG_NEW: dev2
+  NS: tag2-test
+  NS_DEV: tag2-dev
+
+environment_preparation:
+  stage: preparation
+  image: centosadmin/kubernetes-helm:v3.6.3
+  script:
+    - echo ${APP}
+    # Указываем ссылку на api кластера k8s-название для кластера в конфиге
+    - kubectl config set-cluster k8s --insecure-skip-tls-verify=true --server=${K8S_API_URL}   
+    # Указываем токен сервис аккаунта в кластере, который будем использовать для работы с кластером
+    - kubectl config set-credentials ci --token=${K8S_CI_TOKEN_DEV}
+    # cсвязываем настройки кластера (api сервера и токен сервис токена) в контексте ci
+    - kubectl config set-context ci --cluster=k8s --user=ci 
+    - kubectl config use-context ci    # Указываем, что будем использовать контекст ci
+    - kubectl version
+    - kubectl -n ${NS} apply -f  tag-gitlab-test-secret.yaml
+    - kubectl -n ${NS} apply -f ./redis
+    - kubectl -n ${NS} apply -f ./backend
+    - kubectl -n ${NS} apply -f ./controller
+    - kubectl -n ${NS} apply -f ./hardware
+    - kubectl -n ${NS} apply -f ./ws
+    - kubectl -n ${NS} apply -f ./test
+    - sleep 15
+    - kubectl -n ${NS} get pod
+  only:
+    - test_v2
+  tags:
+    - docker
+
+systest:
+  stage: test
+  image: centosadmin/kubernetes-helm:v3.6.3
+  script:
+    # Указываем ссылку на api кластера k8s-название для кластера в конфиге
+    - kubectl config set-cluster k8s --insecure-skip-tls-verify=true --server=${K8S_API_URL}   
+    # Указываем токен сервис аккаунта в кластере, который будем использовать для работы с кластером
+    - kubectl config set-credentials ci --token=${K8S_CI_TOKEN_DEV}
+    # cсвязываем настройки кластера (api сервера и токен сервис токена) в контексте ci
+    - kubectl config set-context ci --cluster=k8s --user=ci 
+    - kubectl config use-context ci    # Указываем, что будем использовать контекст ci
+    - kubectl version
+    - sleep 20
+    - kubectl -n ${NS} get pod $(kubectl -n ${NS}  get pod | awk '/tag-test-test/{print $1}')
+    - kubectl -n ${NS}  exec -it $(kubectl -n ${NS}  get pod | awk '/tag-test-test/{print $1}') -- pytest tests/test.py -s -v --junitxml=junit.xml
+    - kubectl -n ${NS}  exec -it $(kubectl -n ${NS}  get pod | awk '/tag-test-test/{print $1}') -- ls -lh
+    - kubectl -n ${NS}  exec -it $(kubectl -n ${NS}  get pod | awk '/tag-test-test/{print $1}') -- cat junit.xml > junit.xml
+  allow_failure: true
+  artifacts:
+    when: always
+    expire_in: 1 day
+    reports:
+      junit: junit.xml
+  only:
+    - test_v2
+  tags:
+    - docker
+
+environment_destroy:
+  stage: destroy
+  image: centosadmin/kubernetes-helm:v3.6.3
+  when: always
+  script:
+    # Указываем ссылку на api кластера k8s-название для кластера в конфиге
+    - kubectl config set-cluster k8s --insecure-skip-tls-verify=true --server=${K8S_API_URL}   
+    # Указываем токен сервис аккаунта в кластере, который будем использовать для работы с кластером
+    - kubectl config set-credentials ci --token=${K8S_CI_TOKEN_DEV}
+    # cсвязываем настройки кластера (api сервера и токен сервис токена) в контексте ci
+    - kubectl config set-context ci --cluster=k8s --user=ci 
+    - kubectl config use-context ci    # Указываем, что будем использовать контекст ci
+    - kubectl version
+    - kubectl -n ${NS}  logs  $(kubectl -n ${NS}  get pod | awk '/tag-redis-test/{print $1}') > redis.log || true
+    - kubectl -n ${NS} delete -f  tag-gitlab-test-secret.yaml || true
+    - kubectl -n ${NS} delete -f ./redis || true
+    - kubectl -n ${NS} delete -f ./backend || true
+    - kubectl -n ${NS} delete -f ./controller || true
+    - kubectl -n ${NS} delete -f ./hardware || true
+    - kubectl -n ${NS} delete -f ./ws || true
+    - kubectl -n ${NS} delete -f ./test || true
+  artifacts:
+    when: always
+    expire_in: 1 day
+    paths:
+      - $PWD/*.log
+  only:
+    - test_v2
+  tags:
+    - docker
+
+retag_controller:
+  stage: retag
+  rules:
+    - if: $APP == "controller"
+      when: on_success
+    - when: never
+  script:
+    - echo "Retag controller image"
+    - ls -lh
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
+    - docker pull ${CONTROLLER_IMAGE}:${TAG_CURENT}
+    - docker tag ${CONTROLLER_IMAGE}:${TAG_CURENT} ${CONTROLLER_IMAGE}:${TAG_NEW}
+    - docker push ${CONTROLLER_IMAGE}:${TAG_NEW}
+  tags:
+    - docker
+
+retag_hardware:
+  stage: retag
+  rules:
+    - if: $APP == "hardware"
+      when: on_success
+    - when: never
+  script:
+    - echo "Retag hardware image"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
+    - docker pull ${HARDWARE_IMAGE}:${TAG_CURENT_BACK}
+    - docker tag ${HARDWARE_IMAGE}:${TAG_CURENT_BACK} ${HARDWARE_IMAGE}:${TAG_NEW}
+    - docker push ${HARDWARE_IMAGE}:${TAG_NEW}
+  tags:
+    - docker
+
+retag_backend:
+  stage: retag
+  rules:
+    - if: $APP == "backend"
+      when: on_success
+    - when: never
+  script:
+    - echo "Retag backend image"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
+    - docker pull ${BACKEND_IMAGE}:${TAG_CURENT_BACK}
+    - docker tag ${BACKEND_IMAGE}:${TAG_CURENT_BACK} ${BACKEND_IMAGE}:${TAG_NEW}
+    - docker push ${BACKEND_IMAGE}:${TAG_NEW}
+  tags:
+    - docker
+
+
+clone_git_controller:
+  stage: clone
+  image: 
+    name: alpine/git:v2.32.0
+    entrypoint: ["/bin/sh", "-c"]
+  rules:
+    - if: $APP == "controller"
+      when: on_success
+    - when: never
+  script:
+    - git --help
+    - git clone -b main https://$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD@git.iot.orange-business.ru/tag-distribution-machine/backend-services/controller-digital-twin.git
+  artifacts:
+    paths:
+    - ${PWD}/controller-digital-twin
+    expire_in: 1 day
+  tags:
+    - docker
+
+clone_git_hardware:
+  stage: clone
+  image: 
+    name: alpine/git:v2.32.0
+    entrypoint: ["/bin/sh", "-c"]
+  rules:
+    - if: $APP == "hardware"
+      when: on_success
+    - when: never
+  script:
+    - git clone -b dev_4.0 https://$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD@git.iot.orange-business.ru/tag-distribution-machine/backend-services/hardware-control-unit.git
+  artifacts:
+    paths:
+    - ${PWD}/hardware-control-unit
+    expire_in: 1 day
+  tags:
+    - docker
+
+clone_git_backend:
+  stage: clone
+  image: 
+    name: alpine/git:v2.32.0
+    entrypoint: ["/bin/sh", "-c"]
+  rules:
+    - if: $APP == "backend"
+      when: on_success
+    - when: never
+  script:
+    - git clone -b dev_v_4.0 https://$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD@git.iot.orange-business.ru/tag-distribution-machine/backend-services/tag_control_center.git
+  artifacts:
+    paths:
+    - ${PWD}/tag_control_center
+    expire_in: 1 day
+  tags:
+    - docker
+
+deploy_controller:
+  stage: deploy
+  image: centosadmin/kubernetes-helm:v3.6.3
+  rules:
+    - if: $APP == "controller"
+      when: on_success
+    - when: never
+  script:
+    - kubectl config set-cluster k8s --insecure-skip-tls-verify=true --server=${K8S_API_URL}
+    - kubectl config set-credentials ci --token=${K8S_CI_TOKEN_DEV}
+    - kubectl config set-context ci --cluster=k8s --user=ci
+    - kubectl config use-context ci
+    - kubectl version
+    - cd controller-digital-twin/manifests
+    - sed -i "s/controller-digital-twin:latest/controller-digital-twin:${TAG_NEW}/g" $(ls *deployment.yaml | awk ' { print " " $1 } ')
+    - ls *deployment.yaml | awk ' { print " -f " $1 } '
+#    - cat tag-controller-dev-deployment.yaml
+    - kubectl -n ${NS_DEV} delete $(ls *deployment.yaml | awk ' { print " -f " $1 } ') || true
+    - kubectl -n ${NS_DEV} apply $(ls *deployment.yaml | awk ' { print " -f " $1 } ')
+  tags:
+    - docker
+
+deploy_hardware:
+  stage: deploy
+  image: centosadmin/kubernetes-helm:v3.6.3
+  rules:
+    - if: $APP == "hardware"
+      when: on_success
+    - when: never
+  script:
+    - kubectl config set-cluster k8s --insecure-skip-tls-verify=true --server=${K8S_API_URL}
+    - kubectl config set-credentials ci --token=${K8S_CI_TOKEN_DEV}
+    - kubectl config set-context ci --cluster=k8s --user=ci
+    - kubectl config use-context ci
+    - kubectl version
+    - cd hardware-control-unit/manifests
+    - sed -i "s/hardware-control-unit:dev/hardware-control-unit:${TAG_NEW}/g" $(ls *deployment.yaml | awk ' { print " " $1 } ')
+    - kubectl -n ${NS_DEV} apply $(ls *configmap.yaml | awk ' { print " -f " $1 } ')
+    - kubectl -n ${NS_DEV} delete $(ls *deployment.yaml | awk ' { print " -f " $1 } ')  || true
+    - kubectl -n ${NS_DEV} apply $(ls *deployment.yaml | awk ' { print " -f " $1 } ')
+  tags:
+    - docker
+
+deploy_backend:
+  stage: deploy
+  image: centosadmin/kubernetes-helm:v3.6.3
+  rules:
+    - if: $APP == "backend"
+      when: on_success
+    - when: never
+  script:
+    - kubectl config set-cluster k8s --insecure-skip-tls-verify=true --server=${K8S_API_URL}
+    - kubectl config set-credentials ci --token=${K8S_CI_TOKEN_DEV}
+    - kubectl config set-context ci --cluster=k8s --user=ci
+    - kubectl config use-context ci
+    - kubectl version
+    - cd tag_control_center/manifests
+    - ls -l
+    - ls *configmap.yaml
+    - sed -i "s/tag_control_center:test/tag_control_center:${TAG_NEW}/g" $(ls *deployment.yaml | awk ' { print " " $1 } ')
+    - kubectl -n ${NS_DEV} apply $(ls *configmap.yaml | awk ' { print " -f " $1 } ')
+    - kubectl -n ${NS_DEV} delete $(ls *deployment.yaml | awk ' { print " -f " $1 } ') || true
+    - kubectl -n ${NS_DEV} apply $(ls *deployment.yaml | awk ' { print " -f " $1 } ')
+  tags:
+    - docker
+
+clean:
+  stage: clean
+  image: docker:stable
+  when: always
+  script:
+    - docker images -a | grep ${CONTROLLER_IMAGE}  || true
+    - docker images -a | grep ${CONTROLLER_IMAGE} | awk '{print $3}' | xargs docker rmi -f || true
+    - docker images -a | grep ${HARDWARE_IMAGE} | awk '{print $3}' | xargs docker rmi -f || true
+    - docker images -a | grep ${BACKEND_IMAGE} | awk '{print $3}' | xargs docker rmi -f || true
+    - rm -r $PWD/*
+  allow_failure: true
+  only:
+    - test_v2
+  tags:
+    - docker
