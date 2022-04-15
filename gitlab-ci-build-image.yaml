@@ -1,0 +1,25 @@
+# пример билда образа
+.build_image_docker:
+  image: docker:stable
+  services:
+  - docker:dind
+  script:
+    - echo "Run buil image ${CI_REGISTRY_IMAGE}:${TAG_IMAGE:-latest}"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
+    - echo "${CI_COMMIT_SHORT_SHA}" > commit_sha.txt
+    - echo ${CI_REGISTRY_IMAGE}:${TAG_IMAGE:-latest}
+    - DOCKER_BUILDKIT=1 docker build -t ${CI_REGISTRY_IMAGE}:${TAG_IMAGE:-latest} .
+    - docker push ${CI_REGISTRY_IMAGE}:${TAG_IMAGE:-latest}
+
+.build_image_docker_with_date:
+  image: docker:stable
+  services:
+  - docker:dind
+  script:
+    - DATE_BUILD=$(date '+%Y%m%d-%H.%M')
+    - echo "Run buil image ${CI_REGISTRY_IMAGE}:${DATE_BUILD}-${TAG_IMAGE:-latest}"
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
+    - echo "${CI_COMMIT_SHORT_SHA}" > commit_sha.txt
+    - echo ${CI_REGISTRY_IMAGE}:${TAG_IMAGE:-latest}
+    - DOCKER_BUILDKIT=1 docker build -t ${CI_REGISTRY_IMAGE}:${DATE_BUILD}-${TAG_IMAGE:-latest} .
+    - docker push ${CI_REGISTRY_IMAGE}:${DATE_BUILD}-${TAG_IMAGE:-latest}
