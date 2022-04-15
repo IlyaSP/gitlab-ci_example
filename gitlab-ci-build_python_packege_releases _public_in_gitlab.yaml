@@ -1,0 +1,122 @@
+# Пример сборки, релиза и публикации в хранилище гитлаба пакета питона
+ An example of building, releasing and publishing a python package to the gitlab repository
+
+image: python:3.9.6-slim
+
+stages:
+  - test
+  - build
+  - upload
+  - release
+  
+include:
+# tests
+  - project: infrastructure/pipeline_block/test_flake8
+    file: test_flake8.yml
+    ref: v.1.0.1
+  - project: infrastructure/pipeline_block/test_pytest
+    file: test_pytest.yml
+    ref: v.1.0.1
+
+variables:
+  # Package version can only contain numbers (0-9), and dots (.).
+  # Must be in the format of X.Y.Z, i.e. should match /\A\d+\.\d+\.\d+\z/ regular expresion.
+  # See https://docs.gitlab.com/ee/user/packages/generic_packages/#publish-a-package-file
+  PACKAGE_VERSION: $CI_COMMIT_TAG
+  PYTHON_PACKAGE: "template_finder-${CI_COMMIT_TAG}"
+  PYTHON_PACKAGE_TAR: "template_finder-${CI_COMMIT_TAG}.tar.gz"
+  PYTHON_PACKAGE_WHL: "template_finder-${CI_COMMIT_TAG}-py3-none-any.whl"
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${CI_PROJECT_NAME}-generic/${CI_COMMIT_TAG}"
+
+test_pytest:
+  stage: test
+#  image: python:3.9.6-slim
+  variables:
+    FLAGS: "tests/ -s -v"
+
+  before_script:
+    - cd test_source_code
+ #   - export PROJECT_ROOT=${PWD}
+    - apt-get -y update && apt-get -y install --no-install-recommends ffmpeg libsm6 libxext6 
+    - pip3 install --upgrade setuptools wheel
+    - pip install -r requirements.txt
+  extends:
+    - .test_pytest_docker
+  after_script:
+    - mv ${PWD}/test_source_code/test_pytest.xml ${PWD}/test_pytest.xml
+  only:
+    - dev
+  tags:
+    - docker
+
+test_flake8:
+  stage: test
+#  variables:
+#    FLAGS: "--max-line-length=121"
+  extends:
+    - .test_flake8_docker
+  allow_failure: true
+  only:
+    - dev
+  tags:
+    - docker
+
+build_packege:
+  stage: build
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - apt-get -y update && apt-get -y install --no-install-recommends ffmpeg libsm6 libxext6 
+    - cat ${PWD}/test_source_code/template_matching.py > ${PWD}/template_finder/__init__.py
+    - python3 setup.py sdist bdist_wheel
+  artifacts:
+    paths:
+      - dist/
+  # only:
+  #   - ci-cd
+  tags:
+    - docker
+
+upload_packege:
+  stage: upload
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - pip install twine
+    - python setup.py sdist bdist_wheel
+    - ls -lah dist/
+    - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python -m twine upload --verbose --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
+  # only:
+  #   - ci-cd
+  tags:
+    - docker 
+
+upload_artifacrs:
+  stage: upload
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - 'curl   --progress-bar --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file ./dist/${PYTHON_PACKAGE_TAR} "${PACKAGE_REGISTRY_URL}/${PYTHON_PACKAGE_TAR}"'
+    - 'curl   --progress-bar --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file ./dist/${PYTHON_PACKAGE_WHL} "${PACKAGE_REGISTRY_URL}/${PYTHON_PACKAGE_WHL}"'
+  tags:
+    - docker
+
+
+release:
+  # Caution, as of 2021-02-02 these assets links require a login, see:
+  # https://gitlab.com/gitlab-org/gitlab/-/issues/299384
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - |
+      release-cli create --name "Release $CI_COMMIT_TAG" --tag-name $CI_COMMIT_TAG \
+        --assets-link "{\"name\":\"${PYTHON_PACKAGE_TAR}\",\"url\":\"${PACKAGE_REGISTRY_URL}/${PYTHON_PACKAGE_TAR}\"}" \
+        --assets-link "{\"name\":\"${PYTHON_PACKAGE_WHL}\",\"url\":\"${PACKAGE_REGISTRY_URL}/${PYTHON_PACKAGE_WHL}\"}" 
+  # only:
+  #   - ci-cd
+  tags:
+    - docker
+
