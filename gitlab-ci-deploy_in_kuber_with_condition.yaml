@@ -1,4 +1,5 @@
 # Разворачивание тестовой среды с запуском системных тестов, разворачивание приложения в кластере в зависимости от условия
+# Deployment of a test environment with the launch of system tests, deployment of an application in a cluster depending on the condition
 
 stages:
   - preparation
