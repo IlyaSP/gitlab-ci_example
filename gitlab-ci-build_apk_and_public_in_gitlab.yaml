@@ -40,3 +40,135 @@ upload_artifacrs:
 #    - dev
   tags:
     - docker
+
+
+
+############################################## с ключом для подписи приложения ##########################################################################
+stages:
+  - build
+  - upload
+  - deploy
+
+variables:
+  PACKAGE_REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${CI_PROJECT_NAME}-generic/${CI_COMMIT_TAG}"
+
+deploy:
+  stage: build
+  image: reactnativecommunity/react-native-android:5.4
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - ls -la
+    - echo -n $ORANGE_KEY_STORE | base64 -di > ${PWD}/android/app/orange_key_store.keystore
+    - chmod +x ${PWD}/android/app/orange_key_store.keystore
+    - ls -la ${PWD}/android/app/
+  script:
+    - yarn install
+    - chmod +x android/gradlew
+    - ls -la android
+    - yarn clean 
+    - yarn release
+    - mv -v android/app/build/outputs/apk/release/app-release.apk ./meeting-room-$CI_COMMIT_TAG.apk
+    - ls -l
+  artifacts:
+    paths:
+      - meeting-room-$CI_COMMIT_TAG.apk
+#  only:
+#    - dev
+  tags:
+    - docker
+
+upload_artifacrs:
+  stage: upload
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo ${PACKAGE_REGISTRY_URL}
+    - 'curl   --progress-bar --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file ./meeting-room-$CI_COMMIT_TAG.apk "${PACKAGE_REGISTRY_URL}/meeting-room-$CI_COMMIT_TAG.apk"'
+#  only:
+#    - dev
+  tags:
+    - docker
+
+deploy_apk_stage:
+  stage: deploy
+  image: soldat1285/ansible:v2
+  variables:
+    SERVER_IP: 100.76.101.48
+    BECOME_PASS: ${ANSIBLE_PASS_DEV}
+    SERVER_USER: ${ANSIBLE_USER_DEV}
+    TARGET: stage
+    DOMAIN: "100.76.101.48"
+    DEST_DIR: "/mnt/deskery_storage/static"
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - ansible --version
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - ansible-playbook -i hosts.yaml deployapk-playbook.yaml -v
+  when: manual
+  tags:
+    - docker
+
+deploy_apk_dev:
+  stage: deploy
+  image: soldat1285/ansible:v2
+  variables:
+    SERVER_IP: 100.76.101.39
+    BECOME_PASS: ${ANSIBLE_PASS_DEV}
+    SERVER_USER: ${ANSIBLE_USER_DEV}
+    TARGET: dev
+    DOMAIN: "100.76.101.39"
+    DEST_DIR: "/mnt/deskery_storage/static"
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - ansible --version
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - ansible-playbook -i hosts.yaml deployapk-playbook.yaml -v
+  when: manual
+  tags:
+    - docker
+
+deploy_apk_fca-es:
+  stage: deploy
+  image: soldat1285/ansible:v2
+  variables:
+    SERVER_IP: 195.151.73.51
+    BECOME_PASS: ${ANSIBLE_PASS_DEV}
+    SERVER_USER: ${ANSIBLE_USER_DEV}
+    TARGET: fca-es
+    DOMAIN: "smart-office.orange-business.ru"
+    DEST_DIR: "/mnt/deskery_storage/static"
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - ansible --version
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - ansible-playbook -i hosts.yaml deployapk-playbook.yaml -v
+  when: manual
+  tags:
+    - docker
+
+deploy_apk_moscow-es:
+  stage: deploy
+  image: soldat1285/ansible:v2
+  variables:
+    SERVER_IP: 195.151.171.16
+    BECOME_PASS: ${ANSIBLE_PASS_DEV}
+    SERVER_USER: ${ANSIBLE_USER_DEV}
+    TARGET: moscow-es
+    DOMAIN: "easyspace.orange-business.ru"
+    DEST_DIR: "/mnt/deskery_storage/static"
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - ansible --version
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - ansible-playbook -i hosts.yaml deployapk-playbook.yaml -v
+  when: manual
+  tags:
+    - docker
+
+  
